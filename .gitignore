@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# Jupyter (in case anyone opens notebooks)
+.ipynb_checkpoints/
+*.ipynb
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Intermediate pipeline files
+features.parquet
+features_*.parquet
+
+# Large or sensitive data — keep sample data, exclude real client data
+# data/*.csv is kept (judges need sample data to test locally)
+# Uncomment the line below if you ever add real client CSVs to data/:
+# data/*.csv
+
+# Output (regenerated on every run — no point committing)
+output/predictions.csv
+
+# Logs
+*.log
