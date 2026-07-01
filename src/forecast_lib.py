@@ -149,22 +149,30 @@ NORMALIZERS = {
 def load_and_normalize_data_dir(data_dir: str) -> pd.DataFrame:
     """Read every CSV in data_dir, auto-detect its platform by column signature,
     normalize into the canonical schema, and concatenate. Reads by pattern,
-    not hardcoded filenames, per the submission contract (Section 4)."""
+    not hardcoded filenames, per the submission contract (Section 4).
+    Non-ad-platform files (e.g. budget.csv, notes.csv) are silently skipped."""
     csv_paths = sorted(glob.glob(os.path.join(data_dir, "*.csv")))
     if not csv_paths:
         raise FileNotFoundError(f"No CSV files found in {data_dir}")
 
     frames = []
+    skipped = []
     for path in csv_paths:
         raw = pd.read_csv(path)
         platform = detect_platform(raw, os.path.basename(path))
         if platform == "unknown":
-            # Don't silently drop unrecognized files — fail loudly per Section 3 rules
-            raise ValueError(
-                f"Could not detect platform schema for {path}. "
-                f"Columns found: {list(raw.columns)}"
-            )
+            skipped.append(os.path.basename(path))
+            continue
         frames.append(NORMALIZERS[platform](raw))
+
+    if skipped:
+        print(f"[load_data] Skipped non-ad-platform files: {skipped}")
+
+    if not frames:
+        raise ValueError(
+            f"No recognizable ad platform files found in {data_dir}. "
+            f"Expected Google Ads / Meta Ads / Bing Ads export CSVs."
+        )
 
     merged = pd.concat(frames, ignore_index=True)
     return merged
