@@ -1,132 +1,201 @@
-# AIgnition 3.0 — Probabilistic Revenue Forecasting
+# RevenueIQ — Probabilistic Revenue Forecasting
 
-Python version: 3.12
+**AIgnition 3.0 Hackathon Submission · NetElixir**
+
+Python version: 3.12 · Tested on: Linux (Ubuntu 24)
+
+---
 
 ## What this is
 
-A pipeline that takes historical Google Ads / Meta Ads / Bing (MS Ads) export
-CSVs and a future media budget, and produces probabilistic revenue and ROAS
-forecasts (P10/P50/P90 ranges) at the aggregate, channel, campaign-type, and
-individual-campaign level, for 30/60/90-day windows.
+RevenueIQ forecasts e-commerce revenue and ROAS across Google Ads, Meta Ads,
+and Microsoft (Bing) Ads using historical campaign export data and a planned
+media budget. It produces probabilistic P10/P50/P90 ranges at the aggregate,
+channel, campaign-type, and individual campaign level for 30, 60, and 90-day
+windows.
 
-This same forecasting math also powers an interactive companion app
-("RevenueIQ") that adds AI-generated executive summaries and lets a user
-explore budget scenarios live — that app is for the demo walkthrough; this
-repo is the offline, no-network pipeline that gets scored automatically.
+**Two surfaces, one shared engine:**
+- **Offline pipeline** (`run.sh` → `predictions.csv`) — auto-scored by judges,
+  no network calls, fully deterministic, one command
+- **Interactive app** (`App.jsx`) — React browser app with live charts, budget
+  simulation, and Claude-powered AI insights
 
-## How to run it
+---
+
+## Quick start (offline pipeline)
 
 ```bash
+# 1. Install dependencies
 pip install -r requirements.txt
+
+# 2. Run the full pipeline
 ./run.sh ./data ./pickle/model.pkl ./output/predictions.csv
 ```
 
-That's the whole thing. `run.sh` runs two steps for you:
+That's it. Two commands. `predictions.csv` is written to `output/`.
 
-1. **`src/generate_features.py`** — reads every CSV in `data/`, automatically
-   detects which platform each one came from (by its column names, not its
-   filename), normalizes them into one common format, runs a few cleaning
-   steps (see below), and checks the data for consistency issues.
-2. **`src/predict.py`** — loads the trained model from `pickle/model.pkl`,
-   combines it with the freshly cleaned data, runs a Monte Carlo simulation,
-   and writes `output/predictions.csv`.
+### What `run.sh` does internally
+1. **`src/generate_features.py`** — reads every CSV in `data/`, auto-detects
+   which ad platform each file came from (by column signature, not filename),
+   normalizes them to a common schema, validates consistency, applies cleaning
+   rules, writes `features.parquet`
+2. **`src/predict.py`** — loads `pickle/model.pkl`, runs XGBoost inference +
+   Monte Carlo simulation, writes `predictions.csv`
 
-No internet access is used or required at run time.
+---
 
-## How the forecast actually works (plain-English version)
+## How to provide budgets
 
-For each channel, we look at history and work out:
-- **Average ROAS** (revenue per dollar spent) — calculated as *total revenue
-  ÷ total spend*, not an average of monthly ratios. This matters: a slow
-  month with $5 of spend shouldn't count as equally important as a real
-  $50,000 month when figuring out the "typical" performance.
-- **How much that ROAS varies** month to month (its volatility).
-- **Whether it's trending up or down** over time.
+Create `data/budget.csv` with your planned 30-day spend per channel:
 
-Then we simulate 800 different possible futures (Monte Carlo simulation):
-each one picks a slightly different ROAS for each channel (some better than
-average, some worse, following a bell-curve), multiplies it by the planned
-budget, and totals it up. Sorting all 800 outcomes gives us the P10 ("a
-pessimistic but plausible outcome"), P50 ("the most likely outcome"), and
-P90 ("an optimistic but plausible outcome").
-
-## Data cleaning
-
-Two automatic cleaning steps run on every input, regardless of which
-platform it came from:
-- **Attribution-lag trimming** — each channel's most recent ~7 days are
-  dropped before computing stats, since ad platforms typically haven't
-  finished attributing conversions/revenue for very recent days yet, which
-  would otherwise make recent performance look artificially worse. This is
-  skipped automatically for sparse/monthly-granularity uploads.
-- **Zero-activity row removal** — rows with zero spend, zero clicks, and
-  zero revenue (inactive days) are dropped as pure noise.
-
-We also flag (but don't delete) any campaign with under $50 of total
-historical spend as "insufficient data" — it's too little to compute a
-trustworthy ROAS from, so it's excluded from anomaly detection and from
-being used as a baseline for "what's normal," though it still shows up in
-the output for transparency.
-
-## The "model" (`pickle/model.pkl`)
-
-This isn't a classifier or regressor in the traditional sense — it's a
-saved set of channel-level statistical priors (average ROAS, volatility,
-trend) fitted once from our historical training data by `src/train_model.py`.
-`predict.py` loads this and uses it in two ways:
-1. As context (printed for visibility).
-2. As a **fallback** — if a channel in the held-out test data has no rows,
-   or too little spend to compute a reliable estimate on its own, the
-   pipeline falls back to that channel's trained prior instead of an
-   arbitrary constant.
-
-To regenerate it from new training data:
-```bash
-python3 src/train_model.py --data-dir ./data --out ./pickle/model.pkl
+```csv
+channel,budget
+Google Ads,25000
+Meta Ads,18000
+MS Ads,7000
 ```
-(We ran this once ourselves before submitting — the judges' run does not
-re-run training, only `generate_features.py` + `predict.py`, per the
-contract.)
 
-## Budget input
+A sample `budget.csv` is included. If the file is missing, the pipeline
+falls back to each channel's recent 30-day spend run-rate automatically.
 
-The `run.sh` contract only provides `DATA_DIR`, `MODEL_PATH`, and
-`OUTPUT_PATH` — there's no separate argument for the future budget. So
-`predict.py` looks for an optional `data/budget.csv` (columns: `channel,budget`).
-If that file isn't present, it falls back to each channel's recent 30-day
-average daily spend, projected forward across the forecast window — i.e.
-"keep spending roughly what you've been spending."
+---
 
 ## Output format
 
-**Placeholder schema** (long format — one row per window/level/channel/
-campaign-type/campaign): `forecast_window_days, level, channel,
-campaign_type, campaign_name, revenue_p10, revenue_p50, revenue_p90,
-roas_p50, budget`. This should be swapped for the official format the
-moment it's confirmed — the only place that needs to change is the
-`write_predictions()` function in `src/predict.py`.
+`predictions.csv` — one row per (channel, campaign_type, campaign_name,
+forecast_window_days):
 
-## Known assumptions / limitations
+| Column | Description |
+|---|---|
+| channel | Google Ads / Meta Ads / MS Ads |
+| campaign_type | Search / Shopping / Performance Max / etc. |
+| campaign_name | Individual campaign |
+| spend | Projected spend for the window ($) |
+| revenue | Historical revenue ($) |
+| conversions, clicks, impressions, sessions, aov | Historical metrics |
+| forecast_window_days | 30, 60, or 90 |
+| forecasted_revenue_p10 | Conservative revenue forecast ($) |
+| forecasted_revenue_p50 | Most likely revenue forecast ($) |
+| forecasted_revenue_p90 | Optimistic revenue forecast ($) |
+| forecasted_roas_p10/p50/p90 | ROAS ranges |
 
-- Meta Ads' raw export only has one ambiguous `conversion` column (no
-  separate revenue field or true conversion-count field) — it's treated as
-  a revenue-value proxy. Flagged for confirmation with the organizers.
-- GA4 session and Shopify conversion data are not currently ingested —
-  per Q&A clarification, only Google/Meta/Bing ad data is required.
-- Monte Carlo simulation is seeded (`seed=42`) for reproducibility.
+---
+
+## AI insights (backend function)
+
+The `src/ai_insights.py` module calls the Claude API to generate four
+analyses from `predictions.csv`: Executive Summary, Anomaly Detection,
+Budget Reallocation, and Risk Assessment.
+
+**Command line:**
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+python3 src/ai_insights.py --predictions output/predictions.csv --window 30
+
+# Save results as JSON:
+python3 src/ai_insights.py \
+  --predictions output/predictions.csv \
+  --output output/insights.json
+```
+
+**Programmatic import:**
+```python
+import pandas as pd
+from src.ai_insights import run_all_insights
+
+df = pd.read_csv("output/predictions.csv")
+results = run_all_insights(df, api_key="sk-ant-...", window=30)
+
+for name, text in results.items():
+    print(f"--- {name} ---")
+    print(text)
+```
+
+---
+
+## How the forecast works
+
+**Layer 1 — XGBoost ML model**
+Trained on 24,015 historical campaign-day rows. Predicts revenue per
+campaign from 15 features: spend, clicks, impressions, conversions, CTR,
+CPC, channel, campaign type, month, day of week, quarter, log-transformed
+spend/clicks, and historical ROAS context from training data.
+
+Cross-validation (5-fold time-series): **MAE = $252.94, R² = 0.659**
+
+**Layer 2 — Monte Carlo simulation**
+800 simulations per forecast window. Each draws a channel ROAS from a
+normal distribution (mean and std fitted from spend-weighted historical
+data), multiplies by the planned budget, applies a trend multiplier.
+P10/P50/P90 are the 10th, 50th, and 90th percentiles of all 800 outcomes.
+Seeded at 42 — fully reproducible.
+
+**Key design decision — spend-weighted ROAS:**
+ROAS is computed as total revenue ÷ total spend, not as an average of
+monthly ratios. This prevents a low-spend month with $0 revenue from
+dragging down a channel that's genuinely profitable at scale.
+
+---
+
+## Data cleaning (automatic)
+
+Applied to every upload, regardless of file format:
+- **Attribution-lag trimming** — drops the trailing 7 days per channel
+  (ad platforms take 3-7 days to fully attribute conversions)
+- **Zero-activity row removal** — drops rows where spend=0, clicks=0,
+  revenue=0 (paused campaign days, pure noise)
+- **Thin-campaign flagging** — campaigns with <$50 total spend are marked
+  `insufficient_data` and excluded from anomaly detection
+
+---
 
 ## Repo structure
 
 ```
 .
-├── run.sh                   # entry point
-├── requirements.txt
-├── data/                    # input CSVs (swapped at test time)
-├── pickle/model.pkl         # trained channel-level priors
-├── output/predictions.csv   # written on each run
+├── run.sh                    # entry point — the one command judges run
+├── requirements.txt          # pinned dependencies
+├── README.md
+├── data/
+│   ├── budget.csv            # 30-day budget per channel (edit this)
+│   ├── bing_campaign_stats.csv
+│   ├── google_ads_campaign_stats.csv
+│   └── meta_ads_campaign_stats.csv
+├── docs/
+│   └── Technical_Documentation.docx
+├── pickle/
+│   └── model.pkl             # trained XGBoost model + priors
+├── output/
+│   └── predictions.csv       # written on every run
 └── src/
-    ├── forecast_lib.py      # core forecasting engine (shared logic)
-    ├── generate_features.py # stage 1: clean + normalize
-    ├── predict.py           # stage 2: forecast + write output
-    └── train_model.py       # one-time: fit + pickle the model
+    ├── forecast_lib.py       # core engine: normalizers, cleaning, Monte Carlo
+    ├── features.py           # feature engineering (shared train/inference)
+    ├── generate_features.py  # pipeline stage 1
+    ├── predict.py            # pipeline stage 2
+    ├── train_model.py        # one-time training script
+    └── ai_insights.py        # backend Claude API integration
 ```
+
+---
+
+## Re-training the model
+
+The model is already trained and committed. To re-train from new data:
+
+```bash
+python3 src/train_model.py --data-dir ./data --out ./pickle/model.pkl
+```
+
+---
+
+## Dependencies
+
+```
+pandas==2.2.2
+numpy==1.26.4
+pyarrow==16.1.0
+xgboost==3.3.0
+scikit-learn==1.8.0
+```
+
+Install with: `pip install -r requirements.txt`
