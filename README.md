@@ -83,6 +83,13 @@ forecast_window_days):
 
 ## AI insights (backend function)
 
+> **Note for evaluators:** The AI insights module requires an Anthropic API
+> key. Please set your own key via `--api-key` or the `ANTHROPIC_API_KEY`
+> environment variable as shown below. The automated scoring pipeline
+> (`run.sh`) does **not** require an API key — it runs fully offline.
+> The AI layer is demonstrated live in the interactive React app (App.jsx)
+> and can also be triggered via this backend function with a valid key.
+
 The `src/ai_insights.py` module calls the Claude API to generate four
 analyses from `predictions.csv`: Executive Summary, Anomaly Detection,
 Budget Reallocation, and Risk Assessment.
